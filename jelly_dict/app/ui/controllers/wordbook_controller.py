@@ -1,0 +1,139 @@
+"""Wordbook flows: inline display, deletion (Excel + cache + Anki), and
+recent-entry detail dialog. Extracted from MainWindow for clarity.
+
+All status bar messages, dialog buttons, and side-effects are
+identical to the previous inline implementation.
+"""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from PySide6 import QtWidgets
+
+from app.core.models import first_meaning_hint, normalize_word_key
+from app.services.anki_sync_service import AnkiSyncService
+from app.storage import excel_writer
+from app.storage.cache_store import CacheStore
+from app.storage.settings_store import Settings
+from app.ui.entry_detail_dialog import EntryDetailDialog
+from app.ui.word_input_view import WordInputView
+
+log = logging.getLogger(__name__)
+
+
+class WordbookController:
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget,
+        input_view: WordInputView,
+        cache: CacheStore,
+        anki_sync: AnkiSyncService,
+        settings: Settings,
+        status_bar: QtWidgets.QStatusBar,
+    ) -> None:
+        self._parent = parent
+        self._input_view = input_view
+        self._cache = cache
+        self._anki_sync = anki_sync
+        self._settings = settings
+        self._status = status_bar
+
+    def update_settings(self, settings: Settings, anki_sync: AnkiSyncService) -> None:
+        self._settings = settings
+        self._anki_sync = anki_sync
+
+    # ---------- inline rendering ---------------------------------------
+
+    def show_inline(self, language: str) -> None:
+        language = language if language in ("en", "ja") else "en"
+        path = Path(self._settings.excel_path_for(language))
+        entries = [
+            entry
+            for entry in excel_writer.list_entries(path)
+            if entry.language == language and (entry.word or "").strip()
+        ]
+        items: list[tuple[str, str, str, str]] = [
+            (entry.word, language, entry.reading or "",
+             first_meaning_hint(entry, limit=160))
+            for entry in entries
+        ]
+        self._input_view.set_wordbook(language, items)
+        self._status.showMessage(
+            f"{'일본어' if language == 'ja' else '영어'} 단어장 {len(items)}개"
+        )
+
+    # ---------- deletion -----------------------------------------------
+
+    def delete_entries(self, language: str, words_obj: object) -> None:
+        language = language if language in ("en", "ja") else "en"
+        words = [
+            word.strip()
+            for word in words_obj
+            if isinstance(word, str) and word.strip()
+        ] if isinstance(words_obj, list) else []
+        if not words:
+            return
+
+        preview = "\n".join(f"• {word}" for word in words[:10])
+        if len(words) > 10:
+            preview += f"\n... 외 {len(words) - 10}개"
+        sync_note = ""
+        if self._anki_sync.enabled:
+            sync_note = (
+                "\n\nAnkiConnect가 켜져 있으면 Anki 카드도 함께 삭제를 시도합니다."
+            )
+        ok = QtWidgets.QMessageBox.warning(
+            self._parent,
+            "삭제 확인",
+            "선택한 단어를 삭제할까요?\n\n" + preview + sync_note,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        )
+        if ok != QtWidgets.QMessageBox.Yes:
+            return
+
+        path = Path(self._settings.excel_path_for(language))
+        keys = {
+            normalize_word_key(word, language)  # type: ignore[arg-type]
+            for word in words
+        }
+        try:
+            removed = excel_writer.delete_entries(path, language, keys)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self._parent, "삭제 실패", str(exc))
+            return
+
+        try:
+            self._cache.delete_entries(language, keys)  # type: ignore[arg-type]
+        except Exception as exc:
+            log.warning("cache delete failed: %s", exc)
+
+        anki_removed = 0
+        anki_errors: list[str] = []
+        if self._anki_sync.enabled:
+            anki_removed, anki_errors = self._anki_sync.delete_words(words)
+
+        # Re-render the inline wordbook with the updated dataset.
+        self.show_inline(language)
+        message = (
+            f"{'일본어' if language == 'ja' else '영어'} 단어장 {removed}개 삭제됨"
+        )
+        if anki_removed:
+            message += f" · Anki {anki_removed}개"
+        if anki_errors:
+            log.warning("anki delete errors: %s", anki_errors[:5])
+            message += " · Anki 일부 실패"
+        self._status.showMessage(message)
+
+    # ---------- recent-entry detail -----------------------------------
+
+    def open_recent_detail(self, word: str, language: str) -> None:
+        entry = self._cache.get(word, language)  # type: ignore[arg-type]
+        if entry is None:
+            path = Path(self._settings.excel_path_for(language))
+            key = normalize_word_key(word, language)  # type: ignore[arg-type]
+            entry = excel_writer.find_existing(path, language, key)
+        if entry is None:
+            self._status.showMessage("최근 단어 상세를 찾을 수 없습니다.")
+            return
+        EntryDetailDialog(entry, self._parent).exec()

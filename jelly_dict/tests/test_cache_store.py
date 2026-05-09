@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+from app.core.models import VocabularyEntry
+from app.storage.cache_store import CacheStore
+
+
+def test_upsert_and_get_round_trip(isolated_runtime):
+    cache = CacheStore()
+    entry = VocabularyEntry(language="en", word="Apple", reading="/ˈæp.əl/")
+    cache.upsert(entry)
+
+    fetched = cache.get("apple", "en")
+    assert fetched is not None
+    assert fetched.word == "Apple"
+    assert fetched.reading == "/ˈæp.əl/"
+
+
+def test_get_normalizes_japanese_key(isolated_runtime):
+    cache = CacheStore()
+    entry = VocabularyEntry(language="ja", word="カメラ")
+    cache.upsert(entry)
+
+    assert cache.get("ｶﾒﾗ", "ja") is not None
+
+
+def test_upsert_updates_existing(isolated_runtime):
+    cache = CacheStore()
+    cache.upsert(VocabularyEntry(language="en", word="apple", memo="v1"))
+    cache.upsert(VocabularyEntry(language="en", word="apple", memo="v2"))
+
+    fetched = cache.get("apple", "en")
+    assert fetched is not None
+    assert fetched.memo == "v2"
+
+
+def test_recent_lookups_dedup_and_order(isolated_runtime):
+    cache = CacheStore()
+    cache.remember_lookup("apple", "en")
+    cache.remember_lookup("banana", "en")
+    cache.remember_lookup("apple", "en")
+
+    recent = cache.recent(limit=10)
+    words = [r[1] for r in recent]
+    assert "apple" in words
+    assert "banana" in words
+    assert len(set(words)) == len(words)
+
+
+def test_clear_removes_all(isolated_runtime):
+    cache = CacheStore()
+    cache.upsert(VocabularyEntry(language="en", word="apple"))
+    cache.clear()
+    assert cache.get("apple", "en") is None
+
+
+def test_delete_entries_targets_specific_keys(isolated_runtime):
+    cache = CacheStore()
+    cache.upsert(VocabularyEntry(language="en", word="apple"))
+    cache.upsert(VocabularyEntry(language="en", word="banana"))
+    cache.upsert(VocabularyEntry(language="ja", word="月日"))
+
+    cache.delete_entries("en", {"apple"})
+    assert cache.get("apple", "en") is None
+    assert cache.get("banana", "en") is not None
+    # Different language must not be touched.
+    assert cache.get("月日", "ja") is not None
+
+
+def test_delete_entries_no_keys_is_noop(isolated_runtime):
+    cache = CacheStore()
+    cache.upsert(VocabularyEntry(language="en", word="apple"))
+    assert cache.delete_entries("en", set()) == 0
+    assert cache.get("apple", "en") is not None
+
+
+def test_recent_with_entries_returns_cached_payload(isolated_runtime):
+    cache = CacheStore()
+    entry = VocabularyEntry(language="en", word="apple")
+    cache.upsert(entry)
+    cache.remember_lookup("apple", "en", entry_word="apple")
+
+    rows = cache.recent_with_entries(20)
+    assert len(rows) == 1
+    lang, word, entry_word, _, cached = rows[0]
+    assert lang == "en"
+    assert word == "apple"
+    assert entry_word == "apple"
+    assert cached is not None
+    assert cached.word == "apple"
+
+
+def test_recent_with_entries_falls_back_when_entry_word_differs(isolated_runtime):
+    """If the user typed `蘇る` but the canonical entry was stored under
+    `蘇る·甦る`, the JOIN should still find the cached entry by trying
+    the entry_word first."""
+    cache = CacheStore()
+    entry = VocabularyEntry(language="ja", word="蘇る·甦る")
+    cache.upsert(entry)
+    cache.remember_lookup("蘇る", "ja", entry_word="蘇る·甦る")
+
+    rows = cache.recent_with_entries(20)
+    assert len(rows) == 1
+    _, typed_word, entry_word, _, cached = rows[0]
+    assert typed_word == "蘇る"
+    assert entry_word == "蘇る·甦る"
+    assert cached is not None
+    assert cached.word == "蘇る·甦る"
