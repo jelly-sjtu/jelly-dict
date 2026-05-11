@@ -1,0 +1,23 @@
+{{#WordAudio}}{{#ShowFrontAudio}}
+<script>
+// Block autoplay if the user turned TTS off on the back side.
+// Runs BEFORE Anki processes [sound:] below, so the audio element's
+// auto-play call becomes a no-op for ~1s. Manual replay (▶) after the
+// blocking window works normally.
+(function(){
+  try {
+    if (localStorage.getItem('jellydict.tts') === '0') {
+      var origPlay = HTMLAudioElement.prototype.play;
+      HTMLAudioElement.prototype.play = function(){ return Promise.resolve(); };
+      setTimeout(function(){ HTMLAudioElement.prototype.play = origPlay; }, 1000);
+    }
+  } catch(e) {}
+})();
+</script>
+{{/ShowFrontAudio}}{{/WordAudio}}
+
+<div class="headword">{{Word}}</div>
+
+{{#WordAudio}}{{#ShowFrontAudio}}
+{{WordAudio}}
+{{/ShowFrontAudio}}{{/WordAudio}}

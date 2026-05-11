@@ -1,0 +1,71 @@
+{{#WordAudio}}{{#ShowBackAudio}}
+<script>
+// Same trick as the front: temporarily neuter HTMLAudioElement.play so
+// Anki's [sound:] autoplay is silenced when the user toggled TTS off.
+(function(){
+  try {
+    if (localStorage.getItem('jellydict.tts') === '0') {
+      var origPlay = HTMLAudioElement.prototype.play;
+      HTMLAudioElement.prototype.play = function(){ return Promise.resolve(); };
+      setTimeout(function(){ HTMLAudioElement.prototype.play = origPlay; }, 1000);
+    }
+  } catch(e) {}
+})();
+</script>
+{{/ShowBackAudio}}{{/WordAudio}}
+
+{{#Reading}}
+<div class="reading-line">{{Reading}}</div>
+{{/Reading}}
+
+<div class="headword">{{Word}}</div>
+
+{{#WordAudio}}{{#ShowBackAudio}}
+{{WordAudio}}
+{{/ShowBackAudio}}{{/WordAudio}}
+
+<hr class="divider" />
+
+<div class="summary">{{MeaningSummary}}</div>
+
+<hr class="divider" />
+
+{{#ShowRubyToggle}}
+<input type="checkbox" id="ruby-toggle" />
+{{/ShowRubyToggle}}
+<input type="checkbox" id="examples-toggle" />
+<input type="checkbox" id="tts-toggle" checked />
+<div class="toggle-row">
+  {{#ShowRubyToggle}}
+  <label for="ruby-toggle">요미가나</label>
+  {{/ShowRubyToggle}}
+  <label for="examples-toggle">예문 닫기</label>
+  <label for="tts-toggle">TTS</label>
+</div>
+
+<div class="detail">{{MeaningDetail}}</div>
+
+<script>
+// TTS toggle UI logic. The actual autoplay gating is done by the
+// monkey-patch script at the very top of this template; this block
+// only persists the user's choice and stops audio mid-playback if the
+// toggle is flipped to off after the autoplay already started.
+(function(){
+  var t = document.getElementById('tts-toggle');
+  function persisted(){
+    try { return localStorage.getItem('jellydict.tts') !== '0'; }
+    catch(e) { return true; }
+  }
+  if (!t) return;
+  t.checked = persisted();
+  t.addEventListener('change', function(){
+    try { localStorage.setItem('jellydict.tts', t.checked ? '1' : '0'); }
+    catch(e) {}
+    if (!t.checked) {
+      document.querySelectorAll('audio').forEach(function(a){
+        try { a.pause(); a.currentTime = 0; } catch(e) {}
+      });
+    }
+  });
+})();
+</script>

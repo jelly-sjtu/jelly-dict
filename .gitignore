@@ -12,6 +12,10 @@ venv/
 **/.pytest_cache/
 .jelly_dict/
 **/.jelly_dict/
+.install_mode
+**/.install_mode
+.quickstart_ok
+**/.quickstart_ok
 
 build/
 dist/
@@ -19,9 +23,27 @@ dist/
 **/dist/
 
 *.xlsx
+*.xls
 *.apkg
 *.tsv
 *.log
 
 .idea/
 .vscode/
+
+# secrets — never commit API keys, .env files, or anything resembling them
+.env
+.env.*
+*.secret
+secrets.*
+*.key
+*.pem
+settings.local.json
+
+# zip dumps / images
+jelly_dict.zip
+ChatGPT Image*.png
+
+# downloaded dictionary datasets
+전체 내려받기_한국어기초사전_xls_*/
+*한국어기초사전*xls*/

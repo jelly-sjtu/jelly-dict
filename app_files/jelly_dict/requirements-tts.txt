@@ -1,0 +1,3 @@
+-r requirements.txt
+kokoro>=0.3
+soundfile>=0.12

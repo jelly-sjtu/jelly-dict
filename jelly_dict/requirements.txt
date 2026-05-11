@@ -1,6 +1,0 @@
-PySide6==6.7.*
-beautifulsoup4>=4.12
-lxml>=5.0
-playwright>=1.45
-openpyxl>=3.1
-genanki>=0.13
