@@ -30,6 +30,8 @@
 
 Windows와 Linux는 공식 지원 대상이 아닙니다.
 
+Quick Start는 `PySide6>=6.7,<7` 범위에서 현재 Python에 맞는 Qt 패키지를 설치합니다. Python 3.13/3.14처럼 최신 Homebrew Python도 가능한 경우 그대로 사용합니다. PySide6 휠이 아직 제공되지 않는 더 최신 Python에서는 설치가 실패할 수 있으며, 그 경우 Homebrew 등으로 Python 3.14, 3.13, 3.12 중 설치 가능한 버전을 사용해 다시 실행하세요.
+
 ---
 
 ## 빠른 시작

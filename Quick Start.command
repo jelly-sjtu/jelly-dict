@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+
+close_terminal_window() {
+  if [[ "${TERM_PROGRAM:-}" == "Apple_Terminal" ]] && command -v osascript >/dev/null 2>&1; then
+    (sleep 0.2; osascript -e 'tell application "Terminal" to close front window') >/dev/null 2>&1 &
+  fi
+}
 
 SUPPORT_DIR="${SCRIPT_DIR}"
 if [[ ! -x "${SUPPORT_DIR}/scripts/quickstart.sh" && -x "${SCRIPT_DIR}/app_files/scripts/quickstart.sh" ]]; then
@@ -62,13 +68,13 @@ accept_license_or_exit() {
 choose_install_mode() {
   local answer
 
-  echo
-  echo "설치 방식을 선택하세요."
-  echo "  1) 전용 가상환경 사용 (권장)"
-  echo "     이 앱 폴더 안의 .venv에만 설치합니다."
-  echo "  2) 현재 로컬 Python에 설치"
-  echo "     이미 쓰는 Python 환경에 패키지를 설치합니다."
-  echo
+  echo >&2
+  echo "설치 방식을 선택하세요." >&2
+  echo "  1) 전용 가상환경 사용 (권장)" >&2
+  echo "     이 앱 폴더 안의 .venv에만 설치합니다." >&2
+  echo "  2) 현재 로컬 Python에 설치" >&2
+  echo "     이미 쓰는 Python 환경에 패키지를 설치합니다." >&2
+  echo >&2
 
   while true; do
     read -r -p "선택 [1/2, 기본 1] " answer
@@ -82,7 +88,7 @@ choose_install_mode() {
         return
         ;;
       *)
-        echo "1 또는 2를 입력하세요."
+        echo "1 또는 2를 입력하세요." >&2
         ;;
     esac
   done
@@ -95,7 +101,9 @@ if "${SUPPORT_DIR}/scripts/quickstart.sh" --check; then
   echo
   echo "환경 확인 완료."
   if ask_yes_no "바로 실행할까요?" "yes"; then
-    "${SUPPORT_DIR}/scripts/run.sh"
+    "${SUPPORT_DIR}/scripts/run.sh" --detach
+    close_terminal_window
+    exit 0
   fi
   echo
   echo "Done. You can close this window."
@@ -126,9 +134,13 @@ if ask_yes_no "의존성을 설치/업데이트할까요?" "yes"; then
     fi
   fi
 
-  "${SUPPORT_DIR}/scripts/quickstart.sh" --accept-license "${args[@]}"
+  "${SUPPORT_DIR}/scripts/quickstart.sh" --accept-license --detach "${args[@]}"
+  close_terminal_window
+  exit 0
 else
-  "${SUPPORT_DIR}/scripts/run.sh"
+  "${SUPPORT_DIR}/scripts/run.sh" --detach
+  close_terminal_window
+  exit 0
 fi
 
 echo

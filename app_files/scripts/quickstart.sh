@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PUBLIC_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
+PUBLIC_ROOT="$(cd "${REPO_ROOT}/.." && pwd -P)"
 APP_DIR="${REPO_ROOT}/jelly_dict"
 VENV_DIR="${APP_DIR}/.venv"
 INSTALL_MODE_FILE="${APP_DIR}/.install_mode"
+PYTHON_COMMAND_FILE="${APP_DIR}/.python_cmd"
 SETUP_STATE_FILE="${APP_DIR}/.quickstart_ok"
 
 WITH_TTS=0
 RUN_AFTER=0
+DETACH_RUN=0
 CHECK_ONLY=0
 INSTALL_MODE=""
 LICENSE_ACCEPTED=0
@@ -21,6 +23,8 @@ Usage: scripts/quickstart.sh [--run] [--tts] [--mode venv|local]
 
 Options:
   --run   Install/update dependencies, then start jelly dict.
+  --detach
+          When used with --run, launch the app in the background.
   --tts   Also install optional TTS Python dependencies.
   --mode  Choose dependency target. venv is recommended.
   --accept-license
@@ -35,6 +39,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --run)
       RUN_AFTER=1
+      shift
+      ;;
+    --detach)
+      DETACH_RUN=1
       shift
       ;;
     --tts)
@@ -104,6 +112,10 @@ fi
 
 save_install_mode() {
   printf '%s\n' "${INSTALL_MODE}" > "${INSTALL_MODE_FILE}"
+}
+
+save_python_command() {
+  printf '%s\n' "$(base_python_command)" > "${PYTHON_COMMAND_FILE}"
 }
 
 write_setup_state() {
@@ -183,15 +195,127 @@ verify_public_layout() {
 
 venv_matches_current_location() {
   [[ -f "${VENV_DIR}/bin/activate" ]] || return 1
-  grep -Fq "VIRTUAL_ENV=\"${VENV_DIR}\"" "${VENV_DIR}/bin/activate"
+
+  local actual
+  local expected
+  actual="$(grep -E '^([[:space:]]*export[[:space:]]+)?VIRTUAL_ENV=' "${VENV_DIR}/bin/activate" | grep -v 'cygpath' | tail -n 1 || true)"
+  actual="${actual#"${actual%%[![:space:]]*}"}"
+  actual="${actual#export }"
+  actual="${actual#VIRTUAL_ENV=}"
+  actual="${actual%\"}"
+  actual="${actual#\"}"
+  actual="${actual%\'}"
+  actual="${actual#\'}"
+
+  [[ -n "${actual}" && -d "${actual}" ]] || return 1
+  expected="$(cd "${VENV_DIR}" && pwd -P)"
+  actual="$(cd "${actual}" && pwd -P)"
+  [[ "${actual}" == "${expected}" ]]
 }
 
 python_command() {
   if [[ "${INSTALL_MODE}" == "venv" ]]; then
     printf 'python\n'
   else
-    printf 'python3\n'
+    base_python_command
   fi
+}
+
+candidate_python_commands() {
+  printf '%s\n' \
+    python3 \
+    python3.14 \
+    python3.13 \
+    python3.12 \
+    python3.11 \
+    /opt/homebrew/bin/python3 \
+    /opt/homebrew/bin/python3.14 \
+    /opt/homebrew/bin/python3.13 \
+    /opt/homebrew/bin/python3.12 \
+    /opt/homebrew/bin/python3.11 \
+    /usr/local/bin/python3 \
+    /usr/local/bin/python3.14 \
+    /usr/local/bin/python3.13 \
+    /usr/local/bin/python3.12 \
+    /usr/local/bin/python3.11 \
+    /opt/homebrew/opt/python@3.14/bin/python3.14 \
+    /opt/homebrew/opt/python@3.13/bin/python3.13 \
+    /opt/homebrew/opt/python@3.12/bin/python3.12 \
+    /opt/homebrew/opt/python@3.11/bin/python3.11 \
+    /usr/local/opt/python@3.14/bin/python3.14 \
+    /usr/local/opt/python@3.13/bin/python3.13 \
+    /usr/local/opt/python@3.12/bin/python3.12 \
+    /usr/local/opt/python@3.11/bin/python3.11
+}
+
+python_is_supported() {
+  "$1" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+}
+
+python_version_text() {
+  "$1" - <<'PY' 2>/dev/null
+import sys
+print(sys.version.split()[0])
+PY
+}
+
+base_python_command() {
+  local command
+  command="$(select_base_python)"
+  printf '%s\n' "${command}"
+}
+
+select_base_python() {
+  local candidate
+  local seen=":"
+
+  if [[ -n "${JELLY_DICT_PYTHON:-}" ]]; then
+    candidate="${JELLY_DICT_PYTHON}"
+    if command -v "${candidate}" >/dev/null 2>&1 && python_is_supported "${candidate}"; then
+      command -v "${candidate}"
+      return 0
+    fi
+  fi
+
+  if [[ -f "${PYTHON_COMMAND_FILE}" ]]; then
+    candidate="$(tr -d '\r\n' < "${PYTHON_COMMAND_FILE}")"
+    if [[ -n "${candidate}" && "${seen}" != *":${candidate}:"* ]]; then
+      seen="${seen}${candidate}:"
+      if command -v "${candidate}" >/dev/null 2>&1 && python_is_supported "${candidate}"; then
+        command -v "${candidate}"
+        return 0
+      fi
+    fi
+  fi
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    [[ "${seen}" != *":${candidate}:"* ]] || continue
+    seen="${seen}${candidate}:"
+    if command -v "${candidate}" >/dev/null 2>&1 && python_is_supported "${candidate}"; then
+      command -v "${candidate}"
+      return 0
+    fi
+  done < <(candidate_python_commands)
+
+  return 1
+}
+
+print_python_candidates() {
+  local candidate
+  local seen=":"
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    [[ "${seen}" != *":${candidate}:"* ]] || continue
+    seen="${seen}${candidate}:"
+    if command -v "${candidate}" >/dev/null 2>&1; then
+      echo "    - ${candidate}: $("${candidate}" --version 2>&1)"
+    fi
+  done < <(candidate_python_commands)
 }
 
 check_python_packages() {
@@ -208,7 +332,7 @@ if missing:
     sys.exit(1)
 
 checks = [
-    ("PySide6", "PySide6", (6, 7), (6, 8), "6.7.*"),
+    ("PySide6", "PySide6", (6, 7), (7, 0), ">=6.7,<7"),
     ("openpyxl", "openpyxl", (3, 1), None, ">=3.1"),
     ("beautifulsoup4", "bs4", (4, 12), None, ">=4.12"),
     ("lxml", "lxml", (5, 0), None, ">=5.0"),
@@ -262,6 +386,28 @@ with sync_playwright() as p:
         raise SystemExit(1)
 print("  ✓ Playwright WebKit")
 PY
+}
+
+install_requirements_or_explain() {
+  if "$(python_command)" -m pip install -r requirements.txt; then
+    return 0
+  fi
+
+  cat >&2 <<'EOF'
+
+필수 패키지 설치에 실패했습니다.
+
+PySide6는 Python 버전별 macOS wheel 제공 여부의 영향을 받습니다.
+이 앱은 PySide6 >=6.7,<7 범위를 사용하며, 너무 최신 Python에서는
+아직 맞는 PySide6 배포 파일이 없을 수 있습니다.
+
+Homebrew 최신 Python에서 막힌다면 Python 3.14, 3.13, 3.12 중 설치 가능한 버전으로 다시 시도하세요.
+예:
+  brew install python@3.14
+
+그 뒤 Quick Start.command를 다시 실행하세요.
+EOF
+  return 1
 }
 
 check_tts_packages() {
@@ -331,7 +477,9 @@ accept_license_or_exit() {
 }
 
 check_python_version() {
-  python3 - <<'PY'
+  local python_cmd="$1"
+
+  "${python_cmd}" - <<'PY'
 import sys
 
 required = (3, 11)
@@ -340,6 +488,8 @@ if current < required:
     print(f"  ✗ python3 >= {required[0]}.{required[1]} required, found {sys.version.split()[0]}")
     raise SystemExit(1)
 print(f"  ✓ python3 version OK: {sys.version.split()[0]}")
+if current >= (3, 15):
+    print("  ! Python 3.15+ detected; if PySide6 install fails, use Python 3.14 or 3.13")
 PY
 }
 
@@ -389,26 +539,31 @@ check_system_requirements() {
     echo "  ! running under Rosetta; native arm64/x86_64 Python is usually more stable"
   fi
 
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "  ✗ python3 not found"
+  local base_python
+  if ! base_python="$(select_base_python)"; then
+    echo "  ✗ Python 3.11 이상을 찾지 못했습니다"
+    echo "    확인한 Python 후보:"
+    print_python_candidates
     failed=1
-  elif ! check_python_version; then
+  elif ! check_python_version "${base_python}"; then
     failed=1
+  else
+    echo "  ✓ selected Python: ${base_python}"
   fi
 
-  if command -v python3 >/dev/null 2>&1 && ! python3 -m pip --version >/dev/null 2>&1; then
-    echo "  ✗ python3 pip is not available"
+  if [[ -n "${base_python:-}" ]] && ! "${base_python}" -m pip --version >/dev/null 2>&1; then
+    echo "  ✗ selected Python pip is not available"
     failed=1
-  elif command -v python3 >/dev/null 2>&1; then
-    echo "  ✓ python3 pip"
+  elif [[ -n "${base_python:-}" ]]; then
+    echo "  ✓ selected Python pip"
   fi
 
-  if [[ "${INSTALL_MODE}" == "venv" ]] && command -v python3 >/dev/null 2>&1; then
-    if ! python3 -m venv --help >/dev/null 2>&1; then
-      echo "  ✗ python3 venv module is not available"
+  if [[ "${INSTALL_MODE}" == "venv" && -n "${base_python:-}" ]]; then
+    if ! "${base_python}" -m venv --help >/dev/null 2>&1; then
+      echo "  ✗ selected Python venv module is not available"
       failed=1
     else
-      echo "  ✓ python3 venv"
+      echo "  ✓ selected Python venv"
     fi
   fi
 
@@ -436,11 +591,12 @@ check_environment() {
     failed=1
   fi
 
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "  ✗ python3 not found"
+  local base_python
+  if ! base_python="$(select_base_python)"; then
+    echo "  ✗ Python 3.11 이상을 찾지 못했습니다"
     failed=1
   else
-    echo "  ✓ python3: $(python3 --version 2>&1)"
+    echo "  ✓ selected Python: ${base_python} $(python_version_text "${base_python}")"
   fi
 
   if [[ "${INSTALL_MODE}" == "venv" ]]; then
@@ -519,6 +675,7 @@ if [[ "${LICENSE_ACCEPTED}" -ne 1 ]]; then
   accept_license_or_exit
 fi
 save_install_mode
+save_python_command
 
 if [[ "${INSTALL_MODE}" == "venv" ]]; then
   if [[ -d "${VENV_DIR}" ]] && ! venv_matches_current_location; then
@@ -528,7 +685,7 @@ if [[ "${INSTALL_MODE}" == "venv" ]]; then
 
   if [[ ! -d "${VENV_DIR}" ]]; then
     echo "Creating virtual environment: ${VENV_DIR}"
-    python3 -m venv "${VENV_DIR}"
+    "$(base_python_command)" -m venv "${VENV_DIR}"
   fi
 
   # shellcheck source=/dev/null
@@ -536,7 +693,7 @@ if [[ "${INSTALL_MODE}" == "venv" ]]; then
 fi
 
 "$(python_command)" -m pip install --upgrade pip
-"$(python_command)" -m pip install -r requirements.txt
+install_requirements_or_explain
 
 if [[ "${WITH_TTS}" -eq 1 ]]; then
   "$(python_command)" -m pip install -r requirements-tts.txt
@@ -563,5 +720,9 @@ echo "  ${REPO_ROOT}/scripts/run.sh"
 write_setup_state
 
 if [[ "${RUN_AFTER}" -eq 1 ]]; then
-  exec "${REPO_ROOT}/scripts/run.sh"
+  if [[ "${DETACH_RUN}" -eq 1 ]]; then
+    "${REPO_ROOT}/scripts/run.sh" --detach
+  else
+    exec "${REPO_ROOT}/scripts/run.sh"
+  fi
 fi
