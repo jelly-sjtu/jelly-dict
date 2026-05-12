@@ -111,9 +111,7 @@ class WordInputView(QtWidgets.QWidget):
         self._list_height_animation: QtCore.QVariantAnimation | None = None
         self._search_height_animation: QtCore.QVariantAnimation | None = None
         self._top_height_animation: QtCore.QVariantAnimation | None = None
-        self._top_opacity_animation: QtCore.QPropertyAnimation | None = None
         self._ocr_height_animation: QtCore.QVariantAnimation | None = None
-        self._ocr_opacity_animation: QtCore.QPropertyAnimation | None = None
         self._hover_icons: dict[QtWidgets.QPushButton, tuple[QtGui.QIcon, QtGui.QIcon]] = {}
         self._language_actions: dict[str, QtWidgets.QWidgetAction | QtCore.QObject] = {}
         # Debounce timer for the wordbook search field — avoids re-rendering
@@ -136,10 +134,6 @@ class WordInputView(QtWidgets.QWidget):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(6)
         layout.addWidget(self.top_area)
-
-        self.top_opacity = QtWidgets.QGraphicsOpacityEffect(self.top_area)
-        self.top_opacity.setOpacity(1.0)
-        self.top_area.setGraphicsEffect(self.top_opacity)
 
         top_layout.addSpacing(8)
 
@@ -172,9 +166,6 @@ class WordInputView(QtWidgets.QWidget):
         self.ocr_area.setObjectName("ocrArea")
         self.ocr_area.setVisible(False)
         self.ocr_area.setMaximumHeight(0)
-        self.ocr_opacity = QtWidgets.QGraphicsOpacityEffect(self.ocr_area)
-        self.ocr_opacity.setOpacity(0.0)
-        self.ocr_area.setGraphicsEffect(self.ocr_opacity)
         ocr_layout = QtWidgets.QVBoxLayout(self.ocr_area)
         ocr_layout.setContentsMargins(0, 2, 0, 4)
         ocr_layout.setSpacing(6)
@@ -245,10 +236,6 @@ class WordInputView(QtWidgets.QWidget):
         self.lookup_btn.setObjectName("primaryButton")
         self.lookup_btn.setDefault(True)
         self.lookup_btn.setEnabled(False)
-        self.lookup_opacity = QtWidgets.QGraphicsOpacityEffect(self.lookup_btn)
-        self.lookup_opacity.setOpacity(0.0)
-        self.lookup_btn.setGraphicsEffect(self.lookup_opacity)
-
         self.lookup_slot = QtWidgets.QFrame()
         self.lookup_slot.setObjectName("lookupSlot")
         self.lookup_slot.setMaximumWidth(0)
@@ -278,12 +265,6 @@ class WordInputView(QtWidgets.QWidget):
         )
         self.lookup_width_animation.setDuration(160)
         self.lookup_width_animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
-        self.lookup_opacity_animation = QtCore.QPropertyAnimation(
-            self.lookup_opacity, b"opacity", self
-        )
-        self.lookup_opacity_animation.setDuration(120)
-        self.lookup_opacity_animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
-
         self.detected_label = QtWidgets.QLabel("")
         self.detected_label.setObjectName("detectedLabel")
         self.detected_label.setVisible(False)
@@ -433,10 +414,6 @@ class WordInputView(QtWidgets.QWidget):
         self.lookup_width_animation.setStartValue(self.lookup_slot.maximumWidth())
         self.lookup_width_animation.setEndValue(target_width)
         self.lookup_width_animation.start()
-        self.lookup_opacity_animation.stop()
-        self.lookup_opacity_animation.setStartValue(self.lookup_opacity.opacity())
-        self.lookup_opacity_animation.setEndValue(1.0 if should_show else 0.0)
-        self.lookup_opacity_animation.start()
 
     def set_lookup_busy(self, busy: bool) -> None:
         if self._lookup_busy == busy:
@@ -604,8 +581,6 @@ class WordInputView(QtWidgets.QWidget):
     def _set_ocr_area_visible(self, visible: bool) -> None:
         if self._ocr_height_animation is not None:
             self._ocr_height_animation.stop()
-        if self._ocr_opacity_animation is not None:
-            self._ocr_opacity_animation.stop()
 
         if visible:
             self.ocr_area.setVisible(True)
@@ -626,23 +601,12 @@ class WordInputView(QtWidgets.QWidget):
         )
         self._ocr_height_animation.start()
 
-        self._ocr_opacity_animation = QtCore.QPropertyAnimation(
-            self.ocr_opacity, b"opacity", self
-        )
-        self._ocr_opacity_animation.setStartValue(self.ocr_opacity.opacity())
-        self._ocr_opacity_animation.setEndValue(1.0 if visible else 0.0)
-        self._ocr_opacity_animation.setDuration(160)
-        self._ocr_opacity_animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
-        self._ocr_opacity_animation.start()
-
     def _finish_ocr_area_animation(self, visible: bool) -> None:
         if visible:
             self.ocr_area.setMaximumHeight(16777215)
-            self.ocr_opacity.setOpacity(1.0)
             return
         self.ocr_area.setVisible(False)
         self.ocr_area.setMaximumHeight(0)
-        self.ocr_opacity.setOpacity(0.0)
 
     def _set_ocr_status(self, text: str) -> None:
         self.ocr_status.setText(text)
@@ -712,7 +676,6 @@ class WordInputView(QtWidgets.QWidget):
         self._wordbook_expanded = False
         self.top_area.setVisible(True)
         self.top_area.setMaximumHeight(16777215)
-        self.top_opacity.setOpacity(1.0)
         self.recent_title_btn.setText("최근 단어")
         self.wordbook_expand_btn.setVisible(False)
         self.clear_recent_btn.setVisible(True)
@@ -747,7 +710,6 @@ class WordInputView(QtWidgets.QWidget):
         self.recent_title_btn.setText(title)
         self.top_area.setVisible(not self._wordbook_expanded)
         self.top_area.setMaximumHeight(0 if self._wordbook_expanded else 16777215)
-        self.top_opacity.setOpacity(0.0 if self._wordbook_expanded else 1.0)
         self.wordbook_expand_btn.setVisible(True)
         self.wordbook_expand_btn.setText("↗" if self._wordbook_expanded else "↙")
         self.clear_recent_btn.setVisible(False)
@@ -829,8 +791,6 @@ class WordInputView(QtWidgets.QWidget):
     def _animate_wordbook_layout(self) -> None:
         if self._top_height_animation is not None:
             self._top_height_animation.stop()
-        if self._top_opacity_animation is not None:
-            self._top_opacity_animation.stop()
 
         duration = 240
         if not self._wordbook_expanded:
@@ -852,15 +812,6 @@ class WordInputView(QtWidgets.QWidget):
         self._top_height_animation.finished.connect(self._finish_top_animation)
         self._top_height_animation.start()
 
-        self._top_opacity_animation = QtCore.QPropertyAnimation(
-            self.top_opacity, b"opacity", self
-        )
-        self._top_opacity_animation.setStartValue(self.top_opacity.opacity())
-        self._top_opacity_animation.setEndValue(0.0 if self._wordbook_expanded else 1.0)
-        self._top_opacity_animation.setDuration(duration)
-        self._top_opacity_animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
-        self._top_opacity_animation.start()
-
         self.wordbook_search.setVisible(True)
         self.wordbook_search.setMaximumHeight(16777215)
 
@@ -868,11 +819,9 @@ class WordInputView(QtWidgets.QWidget):
         if self._wordbook_expanded:
             self.top_area.setVisible(False)
             self.top_area.setMaximumHeight(0)
-            self.top_opacity.setOpacity(0.0)
             return
         self.top_area.setVisible(True)
         self.top_area.setMaximumHeight(16777215)
-        self.top_opacity.setOpacity(1.0)
 
     def _finish_search_animation(self) -> None:
         self.wordbook_search.setVisible(self._list_mode in ("en", "ja"))

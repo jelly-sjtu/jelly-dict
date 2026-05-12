@@ -16,6 +16,8 @@ venv/
 **/.install_mode
 .quickstart_ok
 **/.quickstart_ok
+.python_cmd
+**/.python_cmd
 
 build/
 dist/

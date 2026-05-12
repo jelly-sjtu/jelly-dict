@@ -1,5 +1,7 @@
 # jelly dict
 
+> **현재 버전: v0.0.1**
+
 **jelly dict**는 영어/일본어 단어를 빠르게 조회해 Excel 단어장에 저장하고, 필요하면 Anki `.apkg` 덱으로 내보내는 **macOS용 로컬 단어장 도구**입니다.
 
 조회한 단어는 Excel 파일에 저장되며, Anki 내보내기도 이 Excel 단어장을 기준으로 생성됩니다.
@@ -25,12 +27,24 @@
 ## 지원 환경
 
 - macOS
-- Python 3.11 이상
+- **Python 3.11 / 3.12 / 3.13 권장** (3.14+ 는 PySide6 휠 부재로 실패할 수 있음)
 - Finder에서 `.command` 파일 실행 가능 환경
 
 Windows와 Linux는 공식 지원 대상이 아닙니다.
 
-Quick Start는 `PySide6>=6.7,<7` 범위에서 현재 Python에 맞는 Qt 패키지를 설치합니다. Python 3.13/3.14처럼 최신 Homebrew Python도 가능한 경우 그대로 사용합니다. PySide6 휠이 아직 제공되지 않는 더 최신 Python에서는 설치가 실패할 수 있으며, 그 경우 Homebrew 등으로 Python 3.14, 3.13, 3.12 중 설치 가능한 버전을 사용해 다시 실행하세요.
+Quick Start는 `PySide6>=6.7,<7` 범위에서 현재 Python에 맞는 Qt 패키지를 설치합니다. PySide6 6.x 시리즈는 Python 3.13까지 macOS wheel을 제공합니다. Homebrew 기본 Python이 3.14 이상이면 `No matching distribution found for PySide6` 로 설치가 실패할 수 있으니, 다음과 같이 호환 버전을 설치한 뒤 다시 실행하세요:
+
+```bash
+brew install python@3.13       # 권장
+# 또는
+brew install python@3.12
+```
+
+특정 Python을 강제하려면 `JELLY_DICT_PYTHON` 환경변수도 사용 가능:
+
+```bash
+JELLY_DICT_PYTHON=/opt/homebrew/bin/python3.13 ./Quick\ Start.command
+```
 
 ---
 

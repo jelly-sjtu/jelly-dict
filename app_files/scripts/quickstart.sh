@@ -9,6 +9,8 @@ VENV_DIR="${APP_DIR}/.venv"
 INSTALL_MODE_FILE="${APP_DIR}/.install_mode"
 PYTHON_COMMAND_FILE="${APP_DIR}/.python_cmd"
 SETUP_STATE_FILE="${APP_DIR}/.quickstart_ok"
+LOG_DIR="${APP_DIR}/.jelly_dict/logs"
+QUICKSTART_LOG="${LOG_DIR}/quickstart.log"
 
 WITH_TTS=0
 RUN_AFTER=0
@@ -16,6 +18,20 @@ DETACH_RUN=0
 CHECK_ONLY=0
 INSTALL_MODE=""
 LICENSE_ACCEPTED=0
+
+if [[ -t 1 ]]; then
+  RESET="$(printf '\033[0m')"
+  ACCENT="$(printf '\033[38;5;209m')"
+  MUTED="$(printf '\033[38;5;245m')"
+  GREEN="$(printf '\033[38;5;108m')"
+  RED="$(printf '\033[38;5;203m')"
+else
+  RESET=""
+  ACCENT=""
+  MUTED=""
+  GREEN=""
+  RED=""
+fi
 
 usage() {
   cat <<'USAGE'
@@ -87,6 +103,7 @@ if [[ ! -d "${APP_DIR}" ]]; then
 fi
 
 cd "${APP_DIR}"
+mkdir -p "${LOG_DIR}"
 
 saved_install_mode() {
   if [[ -f "${INSTALL_MODE_FILE}" ]]; then
@@ -147,6 +164,69 @@ jelly dict 앱 파일 구조가 원래 배포본과 다릅니다.
 EOF
 }
 
+print_step() {
+  printf '  %s•%s %s\n' "${ACCENT}" "${RESET}" "$1"
+}
+
+print_ok() {
+  printf '    %s✓%s %s\n' "${GREEN}" "${RESET}" "$1"
+}
+
+print_fail() {
+  printf '    %s✗%s %s\n' "${RED}" "${RESET}" "$1"
+}
+
+show_log_hint() {
+  printf '    %s로그: %s%s\n' "${MUTED}" "${QUICKSTART_LOG}" "${RESET}"
+}
+
+sanitize_proxy_env() {
+  # pip cannot use SOCKS proxies without the pysocks package — which we
+  # haven't installed yet at this point. If the shell has ALL_PROXY /
+  # HTTPS_PROXY / HTTP_PROXY pointing at a socks:// URL (common on macOS
+  # with Clash, V2Ray, mihomo, etc.) strip them for our pip subprocess so
+  # the install reaches PyPI over a direct connection. HTTP/HTTPS proxies
+  # are left intact because pip handles those natively.
+  local var val notified=0
+  for var in ALL_PROXY all_proxy HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
+    eval "val=\${${var}:-}"
+    if [[ -n "${val}" && "${val}" == socks* ]]; then
+      unset "${var}"
+      if [[ "${notified}" -eq 0 ]]; then
+        printf '  %s!%s SOCKS proxy detected in environment — disabling for pip install\n' "${ACCENT}" "${RESET}"
+        notified=1
+      fi
+    fi
+  done
+}
+
+run_logged() {
+  local label="$1"
+  shift
+
+  print_step "${label}"
+  {
+    echo
+    echo "## ${label}"
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+    printf '$'
+    printf ' %q' "$@"
+    echo
+  } >> "${QUICKSTART_LOG}"
+
+  if "$@" >> "${QUICKSTART_LOG}" 2>&1; then
+    print_ok "완료"
+    return 0
+  fi
+
+  print_fail "실패"
+  show_log_hint
+  echo
+  echo "마지막 로그:"
+  tail -n 30 "${QUICKSTART_LOG}" | sed 's/^/    /'
+  return 1
+}
+
 verify_public_layout() {
   local failed=0
 
@@ -194,22 +274,15 @@ verify_public_layout() {
 }
 
 venv_matches_current_location() {
-  [[ -f "${VENV_DIR}/bin/activate" ]] || return 1
+  # Ask the venv's own Python where it lives. This is robust across
+  # CPython versions (the activate script template has changed format
+  # in 3.12+ / 3.13+) and across symlinked roots like /tmp → /private/tmp.
+  [[ -x "${VENV_DIR}/bin/python" ]] || return 1
 
-  local actual
-  local expected
-  actual="$(grep -E '^([[:space:]]*export[[:space:]]+)?VIRTUAL_ENV=' "${VENV_DIR}/bin/activate" | grep -v 'cygpath' | tail -n 1 || true)"
-  actual="${actual#"${actual%%[![:space:]]*}"}"
-  actual="${actual#export }"
-  actual="${actual#VIRTUAL_ENV=}"
-  actual="${actual%\"}"
-  actual="${actual#\"}"
-  actual="${actual%\'}"
-  actual="${actual#\'}"
-
+  local actual expected
+  actual="$("${VENV_DIR}/bin/python" -c 'import sys, os; print(os.path.realpath(sys.prefix))' 2>/dev/null)" || return 1
   [[ -n "${actual}" && -d "${actual}" ]] || return 1
   expected="$(cd "${VENV_DIR}" && pwd -P)"
-  actual="$(cd "${actual}" && pwd -P)"
   [[ "${actual}" == "${expected}" ]]
 }
 
@@ -222,30 +295,32 @@ python_command() {
 }
 
 candidate_python_commands() {
+  # Order matters: prefer versions with known-good PySide6 wheels first.
+  # PySide6 6.x supports up to Python 3.13; 3.14 wheels may lag behind.
   printf '%s\n' \
-    python3 \
-    python3.14 \
     python3.13 \
     python3.12 \
     python3.11 \
-    /opt/homebrew/bin/python3 \
-    /opt/homebrew/bin/python3.14 \
+    python3.14 \
+    python3 \
     /opt/homebrew/bin/python3.13 \
     /opt/homebrew/bin/python3.12 \
     /opt/homebrew/bin/python3.11 \
-    /usr/local/bin/python3 \
-    /usr/local/bin/python3.14 \
+    /opt/homebrew/bin/python3.14 \
+    /opt/homebrew/bin/python3 \
     /usr/local/bin/python3.13 \
     /usr/local/bin/python3.12 \
     /usr/local/bin/python3.11 \
-    /opt/homebrew/opt/python@3.14/bin/python3.14 \
+    /usr/local/bin/python3.14 \
+    /usr/local/bin/python3 \
     /opt/homebrew/opt/python@3.13/bin/python3.13 \
     /opt/homebrew/opt/python@3.12/bin/python3.12 \
     /opt/homebrew/opt/python@3.11/bin/python3.11 \
-    /usr/local/opt/python@3.14/bin/python3.14 \
+    /opt/homebrew/opt/python@3.14/bin/python3.14 \
     /usr/local/opt/python@3.13/bin/python3.13 \
     /usr/local/opt/python@3.12/bin/python3.12 \
-    /usr/local/opt/python@3.11/bin/python3.11
+    /usr/local/opt/python@3.11/bin/python3.11 \
+    /usr/local/opt/python@3.14/bin/python3.14
 }
 
 python_is_supported() {
@@ -389,7 +464,7 @@ PY
 }
 
 install_requirements_or_explain() {
-  if "$(python_command)" -m pip install -r requirements.txt; then
+  if run_logged "필수 Python 패키지 설치" "$(python_command)" -m pip install -r requirements.txt; then
     return 0
   fi
 
@@ -398,14 +473,22 @@ install_requirements_or_explain() {
 필수 패키지 설치에 실패했습니다.
 
 PySide6는 Python 버전별 macOS wheel 제공 여부의 영향을 받습니다.
-이 앱은 PySide6 >=6.7,<7 범위를 사용하며, 너무 최신 Python에서는
-아직 맞는 PySide6 배포 파일이 없을 수 있습니다.
+이 앱은 PySide6 >=6.7,<7 범위를 사용하며, 너무 최신 Python (3.14+)
+에서는 아직 맞는 PySide6 배포 파일이 없을 수 있습니다.
 
-Homebrew 최신 Python에서 막힌다면 Python 3.14, 3.13, 3.12 중 설치 가능한 버전으로 다시 시도하세요.
-예:
-  brew install python@3.14
+Homebrew 기본 Python이 3.14+ 인 경우 PySide6 호환 버전을 설치하세요:
+  brew install python@3.13     # 권장
+  brew install python@3.12
 
-그 뒤 Quick Start.command를 다시 실행하세요.
+그 뒤 Quick Start.command를 다시 실행하세요. 설치된 여러 Python 중
+원하는 버전을 강제하려면 JELLY_DICT_PYTHON 환경변수도 가능합니다:
+  JELLY_DICT_PYTHON=/opt/homebrew/bin/python3.13 ./Quick\ Start.command
+
+로그에 "Missing dependencies for SOCKS support" 가 보이면 셸의
+ALL_PROXY / HTTPS_PROXY 가 socks://... 로 설정돼 있는 경우입니다.
+이번 실행에서는 자동으로 무시했지만, Clash/V2Ray/mihomo 같은 프록시 앱을
+끄거나 다음 셸 세션에서 unset 해도 됩니다:
+  unset ALL_PROXY HTTPS_PROXY HTTP_PROXY
 EOF
   return 1
 }
@@ -488,8 +571,10 @@ if current < required:
     print(f"  ✗ python3 >= {required[0]}.{required[1]} required, found {sys.version.split()[0]}")
     raise SystemExit(1)
 print(f"  ✓ python3 version OK: {sys.version.split()[0]}")
-if current >= (3, 15):
-    print("  ! Python 3.15+ detected; if PySide6 install fails, use Python 3.14 or 3.13")
+if current >= (3, 14):
+    print(f"  ! Python {current[0]}.{current[1]} detected; PySide6 wheels may not exist yet for this version.")
+    print("    If install fails with 'No matching distribution found for PySide6',")
+    print("    install Python 3.13, 3.12, or 3.11 and rerun Quick Start.")
 PY
 }
 
@@ -679,27 +764,29 @@ save_python_command
 
 if [[ "${INSTALL_MODE}" == "venv" ]]; then
   if [[ -d "${VENV_DIR}" ]] && ! venv_matches_current_location; then
-    echo "Recreating virtual environment for the current folder: ${VENV_DIR}"
+    print_step "현재 폴더에 맞게 가상환경 재생성"
     rm -rf "${VENV_DIR}"
+    print_ok "완료"
   fi
 
   if [[ ! -d "${VENV_DIR}" ]]; then
-    echo "Creating virtual environment: ${VENV_DIR}"
-    "$(base_python_command)" -m venv "${VENV_DIR}"
+    run_logged "전용 가상환경 생성" "$(base_python_command)" -m venv "${VENV_DIR}"
   fi
 
   # shellcheck source=/dev/null
   source "${VENV_DIR}/bin/activate"
 fi
 
-"$(python_command)" -m pip install --upgrade pip
+sanitize_proxy_env
+
+run_logged "pip 업데이트" "$(python_command)" -m pip install --upgrade pip
 install_requirements_or_explain
 
 if [[ "${WITH_TTS}" -eq 1 ]]; then
-  "$(python_command)" -m pip install -r requirements-tts.txt
+  run_logged "TTS Python 패키지 설치" "$(python_command)" -m pip install -r requirements-tts.txt
 fi
 
-"$(python_command)" -m playwright install webkit
+run_logged "Playwright WebKit 설치" "$(python_command)" -m playwright install webkit
 
 echo
 if ! check_environment; then

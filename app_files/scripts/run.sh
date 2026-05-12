@@ -75,22 +75,14 @@ quickstart_state_ok() {
 }
 
 venv_matches_current_location() {
-  [[ -f "${VENV_DIR}/bin/activate" ]] || return 1
+  # Use Python introspection — robust across CPython activate-template
+  # changes and symlinked roots (e.g. /tmp → /private/tmp on macOS).
+  [[ -x "${VENV_DIR}/bin/python" ]] || return 1
 
-  local actual
-  local expected
-  actual="$(grep -E '^([[:space:]]*export[[:space:]]+)?VIRTUAL_ENV=' "${VENV_DIR}/bin/activate" | grep -v 'cygpath' | tail -n 1 || true)"
-  actual="${actual#"${actual%%[![:space:]]*}"}"
-  actual="${actual#export }"
-  actual="${actual#VIRTUAL_ENV=}"
-  actual="${actual%\"}"
-  actual="${actual#\"}"
-  actual="${actual%\'}"
-  actual="${actual#\'}"
-
+  local actual expected
+  actual="$("${VENV_DIR}/bin/python" -c 'import sys, os; print(os.path.realpath(sys.prefix))' 2>/dev/null)" || return 1
   [[ -n "${actual}" && -d "${actual}" ]] || return 1
   expected="$(cd "${VENV_DIR}" && pwd -P)"
-  actual="$(cd "${actual}" && pwd -P)"
   [[ "${actual}" == "${expected}" ]]
 }
 
