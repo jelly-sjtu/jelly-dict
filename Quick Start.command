@@ -22,7 +22,7 @@ else
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-JELLY_DICT_VERSION="0.0.2"
+JELLY_DICT_VERSION="0.0.3"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Theme
