@@ -69,6 +69,9 @@ class ExportService:
             data = dict(zip(keys, [v if v is not None else "" for v in raw]))
             if not data.get("word"):
                 continue
+            row_language = str(data.get("language", "") or "").strip()
+            if row_language and row_language != language:
+                continue
             entries.append(self._row_to_entry(data))
         return entries
 

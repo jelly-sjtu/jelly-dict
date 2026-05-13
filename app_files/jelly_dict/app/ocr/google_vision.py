@@ -18,6 +18,10 @@ from app.ocr.base import OcrResult, OcrToken, normalize_ocr_tokens
 
 logger = logging.getLogger(__name__)
 
+_TINY_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgAAIAAAUAAen63NgAAAAASUVORK5CYII="
+)
+
 
 class GoogleVisionOcrProvider:
     def __init__(self, api_key: str, endpoint: str) -> None:
@@ -75,6 +79,39 @@ class GoogleVisionOcrProvider:
             ) from None
 
         return _parse_response(payload)
+
+
+def test_api_key(api_key: str, endpoint: str) -> None:
+    """Make a tiny Google Vision request to validate a user-provided key."""
+    if not api_key:
+        raise RuntimeError("키 미설정")
+
+    tiny_png = base64.b64decode(_TINY_PNG_BASE64)
+    body = json.dumps(
+        {
+            "requests": [
+                {
+                    "image": {
+                        "content": base64.b64encode(tiny_png).decode("ascii")
+                    },
+                    "features": [{"type": "TEXT_DETECTION"}],
+                }
+            ]
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{endpoint}?key={api_key}",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"HTTP {exc.code} — 키를 확인하세요") from None
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"네트워크 실패: {exc.reason}") from None
 
 
 def _parse_response(payload: dict) -> OcrResult:

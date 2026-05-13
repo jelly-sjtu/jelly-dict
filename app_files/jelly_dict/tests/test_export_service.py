@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from app.core.models import Example, MeaningGroup, Sense, SubSense, VocabularyEntry
-from app.services.export_service import entry_from_export_row
+from app.services.export_service import ExportService, entry_from_export_row
+from app.storage.cache_store import CacheStore
+from app.storage.excel_writer import append_entry
+from app.storage.settings_store import EXCEL_COLUMN_KEYS_DEFAULT, Settings
 
 
 def _row(**overrides):
@@ -107,3 +110,23 @@ def test_export_row_keeps_excel_examples_ahead_of_cache_examples() -> None:
     assert entry.examples_flat[0].source_text == "new example"
     assert nested_examples[0].source_text == "new example"
     assert nested_examples[0].translation_ko == "새 예문"
+
+
+def test_collect_entries_filters_requested_language(tmp_path) -> None:
+    workbook = tmp_path / "vocab.xlsx"
+    append_entry(
+        workbook,
+        VocabularyEntry(language="en", word="apple"),
+        EXCEL_COLUMN_KEYS_DEFAULT,
+    )
+    append_entry(
+        workbook,
+        VocabularyEntry(language="ja", word="月日"),
+        EXCEL_COLUMN_KEYS_DEFAULT,
+    )
+    settings = Settings(excel_path_en=str(workbook), excel_path_ja=str(workbook))
+    service = ExportService(settings, CacheStore(tmp_path / "cache.db"))
+
+    entries = service._collect_entries("en")
+
+    assert [(entry.language, entry.word) for entry in entries] == [("en", "apple")]

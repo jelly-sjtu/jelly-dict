@@ -697,11 +697,14 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             event.ignore()
             return
-        # Stop any in-flight lookup worker so Qt doesn't print
-        # "QThread: Destroyed while thread is still running" on exit.
-        # Wait briefly — the worker is doing a single Playwright fetch
-        # which we want to drain cleanly. 2 seconds is plenty since the
-        # rate limiter and goto timeout are both shorter.
+        if self._is_lookup_running() or self._is_ocr_running():
+            QtWidgets.QMessageBox.information(
+                self,
+                "작업 진행 중",
+                "조회 또는 사진 텍스트 인식이 끝난 뒤 종료해주세요.",
+            )
+            event.ignore()
+            return
         try:
             self._export_ctrl.close()
         except Exception as exc:

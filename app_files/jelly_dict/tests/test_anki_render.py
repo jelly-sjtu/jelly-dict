@@ -103,6 +103,25 @@ def test_render_keeps_ruby_html_in_examples():
     assert "<ruby>" in html
 
 
+def test_render_escapes_non_ruby_example_html():
+    entry = VocabularyEntry(
+        language="en",
+        word="x",
+        examples_flat=[
+            Example(
+                source_text='<img src=x onerror=alert(1)><ruby>月<rt>つき</rt></ruby>',
+                source_text_plain="plain",
+            )
+        ],
+    )
+
+    html = render.render_examples_html(entry)
+
+    assert '<img src=x onerror=alert(1)>' not in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+    assert "<ruby>月<rt>つき</rt></ruby>" in html
+
+
 def test_ruby_html_sanitizes_non_ruby_markup():
     soup = make_soup(
         '<div><ruby onclick="x">月<rt>つき</rt></ruby>'

@@ -6,19 +6,11 @@ Per dev.md §16-A:
 """
 from __future__ import annotations
 
-import re
+import ast
+import linecache
 from pathlib import Path
 
-FORBIDDEN_PATTERNS = [
-    re.compile(r"^\s*import\s+requests\b"),
-    re.compile(r"^\s*from\s+requests\b"),
-    re.compile(r"^\s*import\s+httpx\b"),
-    re.compile(r"^\s*from\s+httpx\b"),
-    re.compile(r"^\s*import\s+aiohttp\b"),
-    re.compile(r"^\s*from\s+aiohttp\b"),
-    re.compile(r"^\s*from\s+urllib\.request\b"),
-    re.compile(r"^\s*import\s+urllib\.request\b"),
-]
+FORBIDDEN_MODULES = {"requests", "httpx", "aiohttp", "urllib.request"}
 
 ALLOWED_PREFIXES = (
     "app/dictionary/",
@@ -41,11 +33,31 @@ def _scan() -> list[str]:
         if any(rel.startswith(prefix) for prefix in ALLOWED_PREFIXES):
             continue
         text = path.read_text(encoding="utf-8")
-        for line_no, line in enumerate(text.splitlines(), start=1):
-            for pattern in FORBIDDEN_PATTERNS:
-                if pattern.match(line):
-                    offenders.append(f"{rel}:{line_no}: {line.strip()}")
+        tree = ast.parse(text, filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if _is_forbidden_import(alias.name):
+                        offenders.append(_format_offender(path, rel, node.lineno))
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                for alias in node.names:
+                    full_name = f"{module}.{alias.name}" if module else alias.name
+                    if _is_forbidden_import(module) or _is_forbidden_import(full_name):
+                        offenders.append(_format_offender(path, rel, node.lineno))
     return offenders
+
+
+def _is_forbidden_import(name: str) -> bool:
+    return any(
+        name == forbidden or name.startswith(forbidden + ".")
+        for forbidden in FORBIDDEN_MODULES
+    )
+
+
+def _format_offender(path: Path, rel: str, line_no: int) -> str:
+    line = linecache.getline(str(path), line_no).strip()
+    return f"{rel}:{line_no}: {line}"
 
 
 def test_no_network_imports_outside_dictionary():

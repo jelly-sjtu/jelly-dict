@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 
 from app.core.models import (
@@ -14,6 +15,7 @@ from app.core.models import (
 )
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+_ALLOWED_EXAMPLE_HTML_TAGS = frozenset({"ruby", "rt", "rp"})
 
 
 def load_template(name: str) -> str:
@@ -94,8 +96,7 @@ def _render_sub_sense(
 
 
 def _render_example(ex: Example, audio_filename: str | None = None) -> str:
-    # source_text may already contain <ruby>; trust it. Fall back to plain.
-    source = ex.source_text or escape(ex.source_text_plain)
+    source = _sanitize_example_source(ex.source_text, ex.source_text_plain)
     parts = [
         '<div class="example">',
         '<div class="example-head">',
@@ -113,6 +114,55 @@ def _render_example(ex: Example, audio_filename: str | None = None) -> str:
         )
     parts.append("</div>")
     return "".join(parts)
+
+
+def _sanitize_example_source(source_text: str, plain_text: str) -> str:
+    """Render example source text while preserving only ruby markup.
+
+    Japanese parser output intentionally carries sanitized ``<ruby>`` /
+    ``<rt>`` markup. Other paths (Excel import, preview editing, manual
+    data) may also populate ``source_text`` with plain user text, so the
+    Anki renderer is the final trust boundary.
+    """
+    if not source_text:
+        return escape(plain_text or "")
+    sanitizer = _RubyOnlyHTMLSanitizer()
+    sanitizer.feed(source_text)
+    sanitizer.close()
+    return sanitizer.html()
+
+
+class _RubyOnlyHTMLSanitizer(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self._parts: list[str] = []
+
+    def html(self) -> str:
+        return "".join(self._parts)
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag in _ALLOWED_EXAMPLE_HTML_TAGS:
+            self._parts.append(f"<{tag}>")
+            return
+        self._parts.append(escape(self.get_starttag_text() or f"<{tag}>"))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _ALLOWED_EXAMPLE_HTML_TAGS:
+            self._parts.append(f"</{tag}>")
+            return
+        self._parts.append(escape(f"</{tag}>"))
+
+    def handle_data(self, data: str) -> None:
+        self._parts.append(escape(data))
+
+    def handle_entityref(self, name: str) -> None:
+        self._parts.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self._parts.append(f"&#{name};")
+
+    def handle_comment(self, data: str) -> None:
+        self._parts.append(escape(f"<!--{data}-->"))
 
 
 def render_examples_html(

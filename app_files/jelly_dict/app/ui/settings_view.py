@@ -28,6 +28,8 @@ class SettingsDialog(QtWidgets.QDialog):
         self._sample_player = None
         self._install_thread: QtCore.QThread | None = None
         self._sample_thread: QtCore.QThread | None = None
+        self._network_test_thread: QtCore.QThread | None = None
+        self._network_test_worker: QtCore.QObject | None = None
         # Keep TTS provider instances alive across clicks so the heavy
         # KPipeline (~327MB torch.load) is built only once per session.
         self._tts_provider_cache: dict[str, object] = {}
@@ -581,6 +583,9 @@ class SettingsDialog(QtWidgets.QDialog):
         self._refresh_voice_add_visibility()
 
     def _save(self) -> None:
+        if self._is_network_test_running():
+            self._set_busy_test_message()
+            return
         en_engine = self.tts_engine_en_combo.currentData() or "none"
         ja_engine = self.tts_engine_ja_combo.currentData() or "none"
         en_voice = self.tts_voice_en_combo.currentData() or ""
@@ -615,22 +620,23 @@ class SettingsDialog(QtWidgets.QDialog):
 
     # ── AnkiConnect ────────────────────────────────────────────────
     def _test_ankiconnect(self) -> None:
-        from app.anki.ankiconnect_client import AnkiConnectClient, AnkiConnectError
-
         url = self.ankiconnect_url.text().strip() or "http://127.0.0.1:8765"
-        client = AnkiConnectClient(url)
-        try:
-            ok = client.is_available()
-        except AnkiConnectError as exc:
-            self.ankiconnect_status.setStyleSheet("color: #d33;")
-            self.ankiconnect_status.setText(f"연결 실패: {exc}")
+        worker = _AnkiConnectTestWorker(url)
+        if not self._run_network_test(worker, self._on_ankiconnect_test_finished):
             return
+        self.ankiconnect_test_btn.setEnabled(False)
+        self.ankiconnect_status.setStyleSheet("color: #888;")
+        self.ankiconnect_status.setText("연결 테스트 중…")
+
+    @QtCore.Slot(bool, str)
+    def _on_ankiconnect_test_finished(self, ok: bool, message: str) -> None:
+        self.ankiconnect_test_btn.setEnabled(True)
         if ok:
             self.ankiconnect_status.setStyleSheet("color: #2a8;")
             self.ankiconnect_status.setText("✓ 연결됨")
         else:
             self.ankiconnect_status.setStyleSheet("color: #d33;")
-            self.ankiconnect_status.setText("응답 없음")
+            self.ankiconnect_status.setText(message or "응답 없음")
 
     # ── Google Vision API key ──────────────────────────────────────
     def _refresh_gv_key_status(self) -> None:
@@ -667,36 +673,74 @@ class SettingsDialog(QtWidgets.QDialog):
             self.gv_key_status.setStyleSheet("color: #d33;")
             self.gv_key_status.setText("키 미설정")
             return
-        try:
-            import base64, json, urllib.request, urllib.error
-            tiny_png = base64.b64decode(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgAAIAAAUAAen63NgAAAAASUVORK5CYII="
-            )
-            payload = json.dumps({
-                "requests": [{
-                    "image": {"content": base64.b64encode(tiny_png).decode("ascii")},
-                    "features": [{"type": "TEXT_DETECTION"}],
-                }]
-            }).encode("utf-8")
-            settings = self._store.load()
-            req = urllib.request.Request(
-                f"{settings.google_vision_endpoint}?key={key}",
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                resp.read()
-        except urllib.error.HTTPError as exc:
-            self.gv_key_status.setStyleSheet("color: #d33;")
-            self.gv_key_status.setText(f"HTTP {exc.code} — 키를 확인하세요")
+        settings = self._store.load()
+        worker = _GoogleVisionKeyTestWorker(key, settings.google_vision_endpoint)
+        if not self._run_network_test(worker, self._on_gv_key_test_finished):
             return
-        except Exception as exc:
+        self.gv_key_test_btn.setEnabled(False)
+        self.gv_key_status.setStyleSheet("color: #aaa59c;")
+        self.gv_key_status.setText("키 테스트 중…")
+
+    @QtCore.Slot(bool, str)
+    def _on_gv_key_test_finished(self, ok: bool, message: str) -> None:
+        self.gv_key_test_btn.setEnabled(True)
+        if not ok:
             self.gv_key_status.setStyleSheet("color: #d33;")
-            self.gv_key_status.setText(f"실패: {type(exc).__name__}")
+            self.gv_key_status.setText(message or "키 테스트 실패")
             return
         self.gv_key_status.setStyleSheet("color: #2a8;")
         self.gv_key_status.setText("✓ 키가 정상입니다")
+
+    def _run_network_test(self, worker: QtCore.QObject, finished_slot) -> bool:
+        if self._is_network_test_running():
+            self._set_busy_test_message()
+            return False
+
+        thread = QtCore.QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)  # type: ignore[attr-defined]
+        worker.finished.connect(finished_slot)  # type: ignore[attr-defined]
+        worker.finished.connect(thread.quit)  # type: ignore[attr-defined]
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_network_test)
+        self._network_test_thread = thread
+        self._network_test_worker = worker
+        thread.start()
+        return True
+
+    def _is_network_test_running(self) -> bool:
+        if self._network_test_thread is None:
+            return False
+        try:
+            return self._network_test_thread.isRunning()
+        except RuntimeError:
+            self._clear_network_test()
+            return False
+
+    @QtCore.Slot()
+    def _clear_network_test(self) -> None:
+        self._network_test_thread = None
+        self._network_test_worker = None
+
+    def _set_busy_test_message(self) -> None:
+        self.ankiconnect_status.setStyleSheet("color: #d33;")
+        self.gv_key_status.setStyleSheet("color: #d33;")
+        self.ankiconnect_status.setText("진행 중인 테스트가 끝난 뒤 다시 시도하세요.")
+        self.gv_key_status.setText("진행 중인 테스트가 끝난 뒤 다시 시도하세요.")
+
+    def reject(self) -> None:
+        if self._is_network_test_running():
+            self._set_busy_test_message()
+            return
+        super().reject()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if self._is_network_test_running():
+            self._set_busy_test_message()
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     # ── TTS install / sample / cache ───────────────────────────────
     def _install_engine(self, name: str) -> None:
@@ -984,6 +1028,45 @@ class _SampleSynthWorker(QtCore.QObject):
             self.finished.emit(False, f"{type(exc).__name__}: {exc}", None)
             return
         self.finished.emit(True, "", self._out_path)
+
+
+class _AnkiConnectTestWorker(QtCore.QObject):
+    finished = QtCore.Signal(bool, str)
+
+    def __init__(self, url: str) -> None:
+        super().__init__()
+        self._url = url
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            from app.anki.ankiconnect_client import AnkiConnectClient
+
+            ok = AnkiConnectClient(self._url).is_available()
+        except Exception as exc:
+            self.finished.emit(False, f"연결 실패: {exc}")
+            return
+        self.finished.emit(ok, "" if ok else "응답 없음")
+
+
+class _GoogleVisionKeyTestWorker(QtCore.QObject):
+    finished = QtCore.Signal(bool, str)
+
+    def __init__(self, api_key: str, endpoint: str) -> None:
+        super().__init__()
+        self._api_key = api_key
+        self._endpoint = endpoint
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            from app.ocr.google_vision import test_api_key
+
+            test_api_key(self._api_key, self._endpoint)
+        except Exception as exc:
+            self.finished.emit(False, str(exc) or type(exc).__name__)
+            return
+        self.finished.emit(True, "")
 
 
 class _VoicevoxVoicePicker(QtWidgets.QDialog):
